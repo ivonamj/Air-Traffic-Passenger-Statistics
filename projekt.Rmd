@@ -1,0 +1,238 @@
+---
+title: "Projekt"
+author: "Ivona Mustapić-Jogun"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+Podatci opisuju statistiku putnika u međunarodnoj zračnoj luci San Francisco.
+Svaki redak odnosi se na putnika zračne luke (ukupno 15007).
+
+Varijable koje se koriste:  
+-Activity.Period            : int  
+(godina i mjesec aktivnosti putnika)  
+-Operating.Airline          : Factor 77 levels "Aer Lingus","Aeromexico",...  
+(naziv zrakoplovne tvrtke za operatora zrakoplova za aktivnost putnika)  
+-Operating.Airline.IATA.Code: Factor 74 levels "","4T","5Y","9W",...  
+(dvočlana oznaka za Operating.Airline)  
+-Published.Airline          : Factor 68 levels "Aer Lingus","Aeromexico",...  
+(naziv zrakoplovne tvrtke koja izdaje kartu i bilježi prihod za aktivnost putnika)  
+-Published.Airline.IATA.Code: Factor 65 levels "","4T","5Y","9W",...  
+(dvočlana oznaka za Published.Airline)  
+-GEO.Summary                : Factor 2 levels "Domestic","International"  
+(kategorizacija s obzirom na to je li se aktivnost putnika odvijala unutar United States ili ne)  
+-GEO.Region                 : Factor 9 levels "Asia","Australia / Oceania","Canada","Central  America","Europe","Mexico","Middle East","South America","US"  
+(malo detaljnije od GEO.Summary, s obzirom na regije)  
+-Activity.Type.Code         : Factor 3 levels "Deplaned","Enplaned","Thru / Transit"  
+(fizička aktivnost putnika, to jest ukrcaj na let, iskrcaj s leta ili prelazak kroz zračnu luku kako bi došli na drugu lokaciju, ali na isti zrakoplov i isti broj leta)  
+-Price.Category.Code        : Factor 2 levels "Low Fare","Other"  
+(kategorizacija s obzirom na to je li zrakoplovna tvrtka niskobudžetna ili ne)  
+-Terminal                   : Factor 5 levels "International","Other","Terminal 1","Terminal 2","Terminal 3"    
+(oznaka terminala gdje se dogodila aktivnost putnika)  
+-Boarding.Area              : Factor 8 levels "A","B","C","D","E","F","G","Other"  
+(oznaka područja gdje se dogodila aktivnost putnika, ovo je podskup terminala; npr. Terminal 1 sadrži područja B i C)  
+-Passenger.Count            : int  
+(broj putnika s atributima od gore u mjesecu)  
+-Adjusted.Activity.Type.Code: Factor 3 levels "Deplaned","Enplaned","Thru / Transit * 2"  
+(pilagođena fizička aktivnost putnika kako bi se ukupan broj putnika izračunao po formuli Enplaned+Deplaned+Thru/Transit*2)  
+-Adjusted.Passenger.Count   : int  
+(broj putnika po formuli Enplaned+Deplaned+Thru/Transit*2)  
+-Year                       : int  
+(godina aktivnosti putnika)  
+-Month                      : Factor 12 levels "January","February","March",...  
+(mjesec aktivnosti putnika)  
+
+Cilj ovog projekta je vidjeti povezanost varijable GEO.Summary s ostalim čimbenicima ove zračne luke.
+
+
+Za početak pogledajmo neke osnovne značajke.
+```{r}
+setwd("C:/Users/Jogun/Desktop/rudarenje podataka/projekt")
+podatci <- read.csv("Air_Traffic_Passenger_Statistics.csv")
+head(podatci)
+attach(podatci)
+str(podatci)
+dim(podatci)
+```
+
+
+Paketi koji se koriste u ovom projektu:  
+-RWeka  
+-party  
+-rpart  
+-cluster  
+-nnet  
+```{r}
+library(RWeka)
+library(cluster)
+library(nnet)
+```
+
+
+Neke varijable sam zanemarila jer su nepotrebne. To su Operating.Airline, Operating.Airline.IATA.Code, Published.Airline.IATA.Code, Adjusted.Activity.Type.Code i Adjusted.Passenger.Count.
+```{r}
+podatci1<-podatci[c(1,4,6:12,15,16)]
+head(podatci1)
+```
+
+
+Odlučila sam varijable prikazati pomoću barplotova kako bih vidjela neka njihova svojstva. Uočila sam da je:  
+-više putnika s internacionalnih letova.  
+-najviše putnika putovalo unutar US-a.  
+-približno jednako putnika koji se iskrcavaju i ukrcavaju dok je jako mali broj putnika koji prolaze kroz zračnu luku i ostaju u istom zrakoplovu i istom broju leta što je sasvim logično.  
+-više putnika koji leti zrakoplovnim tvrtkama koje nisu niskobudžetne.  
+-najviše putnika na terminalu za internacionalne letove.  
+-najviše putnika na području A. To je područje internacionalnog terminala. Nakon njega najviše putnika ima na području G koje zajedno s područjem A čini internacionalni terminal. Ostala područja imaju znatno manji broj putnika pa iz ovoga možemo zaključiti kako bi zračna luka trebala drukčije rasporediti upotrebu područja, odnosno terminala. Npr. koristeći dva terminala za internacionalne letove.  
+-za 2005. i 2016. godinu manje putnika no to je zato što imamo podatke od 07.2005. do 03.2016., to jest za 2005. i 2016. godinu nemamo sve mjesece.  
+-zastupljenost mjeseci prilbližno jednaka. Najmanji broj putnika imaju 4., 5. i 6. mjesec koji nisu zastupljeni onoliko puta koliko i svi ostali.  
+```{r}
+barplot(table(podatci$GEO.Summary))
+barplot(table(podatci$GEO.Region))
+barplot(table(podatci$Activity.Type.Code))
+barplot(table(podatci$Price.Category.Code))
+barplot(table(podatci$Terminal))
+barplot(table(podatci$Boarding.Area))
+barplot(table(podatci$Year))
+barplot(table(podatci$Month))
+```
+
+
+Sada sam odlučila zanemariti i varijable Year i Month jer mi neće više biti potrebne, a njihovu vrijednost imam u zajedničkoj varijabli Activity.Period.
+```{r}
+podatci1<-podatci1[c(-10,-11)]
+head(podatci1)
+```
+
+
+Activity.Period i Passenger.Count nisu ovisne, to jest broj putnika ne ovisi o vremenu u godini.
+```{r}
+cor(podatci[c(1,12)])
+```
+
+
+Sada dolazimo do glavnog dijela.
+
+
+U sljedećem dijelu prikazat ću stabla s obzirom na GEO.Summary izbacivanjem varijabli koje su sigurno povezane s tom varijablom i vidjeti kakvo će razvrstavanje biti nakon svih tih izbacivanja. Koristit ću metodu J48. Upotrijebit ću ju prvo na cijelom skupu podataka koji sada imam, zatim na skupu podataka bez varijable GEO.Region, nakon toga bez varijabla GEO.Region i Terminal te naposljetku bez varijabla GEO.Region, Terminal i Boarding.Area.
+
+
+Koristeći stablo na cijelom skupu podataka koji sada imam dobila sam točno razvrstan skup podataka. To je zbog toga što su GEO.Region i GEO.Summary u potpunosti povezane varijable.
+```{r}
+set.seed(123)
+skup_no1 <- sample(2, nrow(podatci1), replace=TRUE, prob=c(0.7, 0.3))
+skup_za_treniranje1 <- podatci1[skup_no1==1,]
+skup_za_testiranje1 <- podatci1[skup_no1==2,]
+
+podatci_j48_stablo1 <- J48(GEO.Summary ~ ., data = skup_za_treniranje1)
+treniranje_j481 <- summary(podatci_j48_stablo1)$confusionMatrix
+treniranje_j481
+eval_j481 <- evaluate_Weka_classifier(podatci_j48_stablo1, newdata = skup_za_testiranje1)$confusionMatrix
+eval_j481
+```
+
+
+Sada sam iz skupa podataka izbacila varijablu GEO.Region kako bih vidjela kako će metoda J48 razvrstati ove podatke. Ovdje već postoji nekoliko grešaka no razvrstavanje nije toliko loše.
+```{r}
+podatci2 <- podatci1[-4]
+
+set.seed(123)
+skup_no2 <- sample(2, nrow(podatci2), replace=TRUE, prob=c(0.7, 0.3))
+skup_za_treniranje2 <- podatci2[skup_no2==1,]
+skup_za_testiranje2 <- podatci2[skup_no2==2,]
+
+podatci_j48_stablo2 <- J48(GEO.Summary ~ ., data = skup_za_treniranje2)
+treniranje_j482 <- summary(podatci_j48_stablo2)$confusionMatrix
+treniranje_j482
+eval_j482 <- evaluate_Weka_classifier(podatci_j48_stablo2, newdata = skup_za_testiranje2)$confusionMatrix
+eval_j482
+```
+
+
+Izbacivši i varijablu Terminal, dobila sam malo bolje razvrstavanje na skupu za treniranje, ali malo gore na skupu za testiranje.
+```{r}
+podatci3 <- podatci2[-6]
+set.seed(123)
+skup_no3 <- sample(2, nrow(podatci3), replace=TRUE, prob=c(0.7, 0.3))
+skup_za_treniranje3 <- podatci3[skup_no3==1,]
+skup_za_testiranje3 <- podatci3[skup_no3==2,]
+
+podatci_j48_stablo3 <- J48(GEO.Summary ~ ., data = skup_za_treniranje3)
+treniranje_j483 <- summary(podatci_j48_stablo3)$confusionMatrix
+treniranje_j483
+eval_j483 <- evaluate_Weka_classifier(podatci_j48_stablo3, newdata = skup_za_testiranje3)$confusionMatrix
+eval_j483
+```
+
+
+Na kraju sam izbacila i varijablu Boarding.Area. Sada više u skupu podataka nemamo nijednu varijablu naizgled povezanu s GEO.Summary. Ovdje već postoji puno više grešaka, posebno na skupu za testiranje.
+```{r}
+podatci4 <- podatci3[-6]
+set.seed(123)
+skup_no4 <- sample(2, nrow(podatci4), replace=TRUE, prob=c(0.7, 0.3))
+skup_za_treniranje4 <- podatci4[skup_no4==1,]
+skup_za_testiranje4 <- podatci4[skup_no4==2,]
+
+podatci_j48_stablo4 <- J48(GEO.Summary ~ ., data = skup_za_treniranje4)
+treniranje_j484 <- summary(podatci_j48_stablo4)$confusionMatrix
+treniranje_j484
+eval_j484 <- evaluate_Weka_classifier(podatci_j48_stablo4, newdata = skup_za_testiranje4)$confusionMatrix
+eval_j484
+```
+
+Zaključujem kako je varijabla GEO.Summary pOvezana i s Terminal i Boarding.Area, ali ne toliko koliko s GEO.Region. Izbacivanjem svih tih varijabli ne dobivam baš dobre rezultate razvrstavanja.
+
+
+Sada sam ostavila varijable koje naizgled nisu povezane s GEO.Summary.
+```{r}
+novi_podatci<-podatci[c(1,4,6,8,9,12)]
+head(novi_podatci)
+```
+
+
+Želim vidjeti hoće li ovi podatci biti dobro grupirani korištenjem k-medoida (k=2). Kao rezultat dobivam da podatci nisu dobro grupirani.
+```{r}
+novi_podatci1<-novi_podatci
+novi_podatci1 <- cbind(novi_podatci1, model.matrix( ~ 0 + Activity.Type.Code, novi_podatci1))
+novi_podatci1 <- cbind(novi_podatci1, model.matrix( ~ 0 + Price.Category.Code, novi_podatci1))
+novi_podatci1 <- cbind(novi_podatci1, model.matrix( ~ 0 + Published.Airline, novi_podatci1))
+novi_podatci1<-novi_podatci1[c(-2,-4,-5)]
+novi_podatci2<-novi_podatci1
+novi_podatci2$GEO.Summary<-NULL
+
+km1 <- pam(novi_podatci2, 2)
+table(novi_podatci1$GEO.Summary, km1$clustering)
+layout(matrix(c(1,2),1,2))
+clusplot(km1, col.p=km1$clustering)
+```
+
+
+Ovdje sam željela vidjeti kako će podatci biti grupirani kada ostavim jedine dvije numeričke varijable s varijablom GEO.Summary. Rezultati grupiranja su jednaki kao gore. Zaključujem kako varijable koje imam gore, a ne ovdje ne utječu na grupiranje (te varijable su faktori).
+```{r}
+novi_podatci3<-podatci[c(1,6,12)]
+novi_podatci4<-novi_podatci3
+novi_podatci4$GEO.Summary<-NULL
+
+km2 <- pam(novi_podatci4, 2)
+table(novi_podatci3$GEO.Summary, km2$clustering)
+layout(matrix(c(1,2),1,2))
+clusplot(km2, col.p=km2$clustering)
+```
+
+
+Sada sam koristila neuronske mreže. Nisam uspjela dobiti točne rezultate.
+```{r}
+set.seed(123)
+skup_no5 <- sample(2, nrow(novi_podatci), replace=TRUE, prob=c(0.7, 0.3))
+skup_za_treniranje5 <- novi_podatci[skup_no5==1,]
+skup_za_testiranje5 <- novi_podatci[skup_no5==2,]
+
+nn1_model <- nnet(GEO.Summary ~ ., data = skup_za_treniranje5, size = 13, rang = 0.1, decay = 0.00001, maxit=1000)
+table(skup_za_treniranje5$GEO.Summary, 
+      predict(nn1_model, skup_za_treniranje5, type="class"))
+table(skup_za_testiranje5$GEO.Summary, predict(nn1_model, skup_za_testiranje5, type="class"))
+```
+
+
+Zaključujem da varijabla GEO.Summary nije povezana s varijablama koje nisu naizgled s njom povezane. Općenito mislim da se iz ovog skupa podataka ne može puno zaključiti osim nekih osnovnih svojstava koje sam navela u početku.
